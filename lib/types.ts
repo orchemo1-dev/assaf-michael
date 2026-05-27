@@ -7,6 +7,7 @@ export interface Event {
   type: EventType
   title: string
   date: string
+  end_date?: string
   start_time?: string
   end_time?: string
   price?: number

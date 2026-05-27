@@ -28,7 +28,7 @@ const EVENT_ICONS: Record<EventType, React.ElementType> = {
 
 const EMPTY_FORM = {
   type: 'gig' as EventType,
-  title: '', date: '', start_time: '', end_time: '',
+  title: '', date: '', end_date: '', start_time: '', end_time: '',
   price: '', advance_paid: '',
   advance_received: false,
   contact_name: '', contact_phone: '', lineup: '', equipment: '',
@@ -52,7 +52,12 @@ export default function CalendarPage() {
   const load = async () => {
     const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
     const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
-    const { data } = await supabase.from('events').select('*').gte('date', start).lte('date', end).order('start_time')
+    // Fetch events that start in this month OR multi-day events that end in this month
+    const { data } = await supabase
+      .from('events').select('*')
+      .or(`date.gte.${start},end_date.gte.${start}`)
+      .or(`date.lte.${end},end_date.lte.${end}`)
+      .order('start_time')
     setEvents(data ?? [])
   }
 
@@ -69,7 +74,19 @@ export default function CalendarPage() {
 
   const getEventsForDay = (day: number) => {
     const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    return events.filter(e => e.date === ds)
+    return events.filter(e => {
+      const endDs = e.end_date ?? e.date
+      return e.date <= ds && endDs >= ds
+    })
+  }
+
+  // For multi-day events: determine position of this day within the span
+  const getDayPosition = (ev: Event, day: number): 'single' | 'start' | 'middle' | 'end' => {
+    if (!ev.end_date || ev.end_date === ev.date) return 'single'
+    const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    if (ds === ev.date) return 'start'
+    if (ds === ev.end_date) return 'end'
+    return 'middle'
   }
 
   const handleDayClick = (day: number) => {
@@ -94,6 +111,7 @@ export default function CalendarPage() {
     const { data: { user } } = await supabase.auth.getUser()
     const payload: Partial<Event> = {
       type: form.type, title: form.title, date: form.date,
+      end_date: form.end_date && form.end_date !== form.date ? form.end_date : undefined,
       start_time: form.start_time || undefined, end_time: form.end_time || undefined,
       notes: form.notes || undefined, created_by: user?.id,
     }
@@ -208,15 +226,26 @@ export default function CalendarPage() {
                       <div className="flex flex-col gap-0.5">
                         {dayEvs.slice(0, 2).map(ev => {
                           const Icon = EVENT_ICONS[ev.type as EventType]
+                          const pos = getDayPosition(ev, day)
+                          const isStart  = pos === 'start' || pos === 'single'
+                          const isEnd    = pos === 'end'   || pos === 'single'
+                          const isMiddle = pos === 'middle'
                           return (
                             <button
                               key={ev.id}
                               onClick={e => { e.stopPropagation(); setSelected(ev) }}
-                              className="flex items-center gap-1 px-1.5 py-[3px] rounded-md text-white text-[10px] font-medium w-full text-right truncate transition-opacity hover:opacity-85"
-                              style={{ background: EVENT_COLORS[ev.type as EventType] }}
+                              className="flex items-center gap-1 py-[3px] text-white text-[10px] font-medium w-full text-right truncate transition-opacity hover:opacity-85"
+                              style={{
+                                background: EVENT_COLORS[ev.type as EventType],
+                                paddingRight: isStart ? '6px' : '2px',
+                                paddingLeft:  isEnd   ? '6px' : '2px',
+                                borderRadius: isMiddle ? '0' : isStart && isEnd ? '5px' : isStart ? '5px 0 0 5px' : '0 5px 5px 0',
+                                marginRight:  isStart  ? '0' : '-4px',
+                                marginLeft:   isEnd    ? '0' : '-4px',
+                              }}
                             >
-                              <Icon size={9} />
-                              <span className="truncate">{ev.title}</span>
+                              {isStart && <Icon size={9} style={{ flexShrink: 0 }} />}
+                              {isStart && <span className="truncate">{ev.title}</span>}
                             </button>
                           )
                         })}
@@ -291,7 +320,10 @@ export default function CalendarPage() {
                 {EVENT_LABELS[selected.type as EventType]}
               </span>
               <span className="text-sm" style={{ color: '#888' }}>
-                {selected.date}{selected.start_time ? ` · ${selected.start_time}–${selected.end_time}` : ''}
+                {selected.end_date && selected.end_date !== selected.date
+                  ? `${selected.date} – ${selected.end_date}`
+                  : selected.date}
+                {selected.start_time ? ` · ${selected.start_time}–${selected.end_time}` : ''}
               </span>
             </div>
 
@@ -376,16 +408,28 @@ export default function CalendarPage() {
               <input className={inp} autoFocus value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="שם האירוע" />
             </F>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-3 sm:col-span-1">
-                <F label="תאריך *">
-                  <input type="date" className={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={{ direction: 'ltr' }} />
-                </F>
-              </div>
-              <F label="כניסה">
+            <div className="grid grid-cols-2 gap-2">
+              <F label="תאריך התחלה *">
+                <input type="date" className={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={{ direction: 'ltr' }} />
+              </F>
+              <F label="תאריך סיום">
+                <input
+                  type="date"
+                  className={inp}
+                  value={form.end_date}
+                  min={form.date}
+                  onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))}
+                  style={{ direction: 'ltr' }}
+                  placeholder={form.date}
+                />
+              </F>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <F label="שעת כניסה">
                 <input type="time" className={inp} value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} style={{ direction: 'ltr' }} />
               </F>
-              <F label="יציאה">
+              <F label="שעת יציאה">
                 <input type="time" className={inp} value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} style={{ direction: 'ltr' }} />
               </F>
             </div>
