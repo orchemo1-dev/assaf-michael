@@ -20,6 +20,7 @@ const LINKS = [
   { label: 'Beatport', url: 'https://www.beatport.com/artist/assaf-michael' },
   { label: 'Spotify', url: 'https://open.spotify.com/artist/search/assaf%20michael' },
   { label: 'Instagram', url: 'https://instagram.com/assafmichael' },
+  { label: 'Press Kit (Drive)', url: 'https://drive.google.com/drive/folders/1HdmngwRpI0maUQn4q2W_JS3mz6NvKcAb?usp=drive_link' },
 ]
 
 export default function EpkPage() {

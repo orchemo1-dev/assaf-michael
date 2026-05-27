@@ -206,22 +206,31 @@ export default function CalendarPage() {
             {cells.slice(wi * 7, wi * 7 + 7).map((day, ci) => {
               const isToday = day !== null && new Date().getDate() === day && new Date().getMonth() === month && new Date().getFullYear() === year
               const dayEvents = day ? getEventsForDay(day) : []
+              const dateStr = day ? `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` : ''
               return (
                 <div
                   key={ci}
-                  className="min-h-[100px] p-1.5"
+                  className="min-h-[60px] md:min-h-[100px] p-1 md:p-1.5 cursor-pointer group"
                   style={{ borderRight: ci < 6 ? '0.5px solid #e5e5e0' : 'none', background: day ? 'white' : '#fafaf8' }}
+                  onClick={() => {
+                    if (!day) return
+                    setForm({ ...EMPTY_FORM, date: dateStr })
+                    setShowForm(true)
+                  }}
                 >
                   {day && (
                     <>
-                      <div
-                        className="w-6 h-6 flex items-center justify-center rounded-full text-xs font-medium mb-1"
-                        style={{
-                          background: isToday ? '#e24b4a' : 'transparent',
-                          color: isToday ? 'white' : '#333',
-                        }}
-                      >
-                        {day}
+                      <div className="flex items-center justify-between mb-0.5">
+                        <div
+                          className="w-6 h-6 flex items-center justify-center rounded-full text-xs font-medium"
+                          style={{
+                            background: isToday ? '#e24b4a' : 'transparent',
+                            color: isToday ? 'white' : '#333',
+                          }}
+                        >
+                          {day}
+                        </div>
+                        <span className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full text-white text-[10px]" style={{ background: '#e24b4a' }}>+</span>
                       </div>
                       <div className="flex flex-col gap-0.5">
                         {dayEvents.map(ev => {
@@ -229,7 +238,7 @@ export default function CalendarPage() {
                           return (
                             <button
                               key={ev.id}
-                              onClick={() => setSelected(ev)}
+                              onClick={e => { e.stopPropagation(); setSelected(ev) }}
                               className="flex items-center gap-1 px-1.5 py-0.5 rounded text-white text-[10px] font-medium w-full text-right truncate"
                               style={{ background: EVENT_COLORS[ev.type as EventType] }}
                             >
