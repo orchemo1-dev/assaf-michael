@@ -43,6 +43,7 @@ export default function CalendarPage() {
   const [events, setEvents]   = useState<Event[]>([])
   const [selected, setSelected] = useState<Event | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [dayView, setDayView]   = useState<{ date: string; events: Event[] } | null>(null)
   const [form, setForm]       = useState({ ...EMPTY_FORM })
   const [saving, setSaving]   = useState(false)
 
@@ -51,7 +52,7 @@ export default function CalendarPage() {
   const load = async () => {
     const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
     const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
-    const { data } = await supabase.from('events').select('*').gte('date', start).lte('date', end)
+    const { data } = await supabase.from('events').select('*').gte('date', start).lte('date', end).order('start_time')
     setEvents(data ?? [])
   }
 
@@ -71,9 +72,20 @@ export default function CalendarPage() {
     return events.filter(e => e.date === ds)
   }
 
-  const openFormForDay = (day: number) => {
+  const handleDayClick = (day: number) => {
     const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    setForm({ ...EMPTY_FORM, date: ds })
+    const dayEvs = events.filter(e => e.date === ds)
+    if (dayEvs.length > 0) {
+      setDayView({ date: ds, events: dayEvs })
+    } else {
+      setForm({ ...EMPTY_FORM, date: ds })
+      setShowForm(true)
+    }
+  }
+
+  const openFormForDate = (date: string) => {
+    setDayView(null)
+    setForm({ ...EMPTY_FORM, date })
     setShowForm(true)
   }
 
@@ -107,6 +119,13 @@ export default function CalendarPage() {
     await supabase.from('events').delete().eq('id', id)
     setSelected(null)
     load()
+  }
+
+  // Format date for display: "יום שלישי, 14 ביוני"
+  const formatDateHe = (ds: string) => {
+    const d = new Date(ds)
+    const dayNames = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת']
+    return `יום ${dayNames[d.getDay()]}, ${d.getDate()} ב${MONTHS_HE[d.getMonth()]}`
   }
 
   return (
@@ -164,6 +183,7 @@ export default function CalendarPage() {
             {cells.slice(wi * 7, wi * 7 + 7).map((day, ci) => {
               const isToday = day !== null && new Date().getDate() === day && new Date().getMonth() === month && new Date().getFullYear() === year
               const dayEvs  = day ? getEventsForDay(day) : []
+              const hasMore = dayEvs.length > 2
               return (
                 <div
                   key={ci}
@@ -173,7 +193,7 @@ export default function CalendarPage() {
                     background: day ? 'white' : '#fafaf8',
                     cursor: day ? 'pointer' : 'default',
                   }}
-                  onClick={() => day && openFormForDay(day)}
+                  onClick={() => day && handleDayClick(day)}
                 >
                   {day && (
                     <>
@@ -184,12 +204,9 @@ export default function CalendarPage() {
                         >
                           {day}
                         </span>
-                        {dayEvs.length === 0 && (
-                          <span className="opacity-0 group-hover:opacity-100 text-[10px] font-medium" style={{ color: '#ccc' }}>+</span>
-                        )}
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        {dayEvs.map(ev => {
+                        {dayEvs.slice(0, 2).map(ev => {
                           const Icon = EVENT_ICONS[ev.type as EventType]
                           return (
                             <button
@@ -203,6 +220,11 @@ export default function CalendarPage() {
                             </button>
                           )
                         })}
+                        {hasMore && (
+                          <span className="text-[10px] font-medium px-1" style={{ color: '#aaa' }}>
+                            +{dayEvs.length - 2} עוד
+                          </span>
+                        )}
                       </div>
                     </>
                   )}
@@ -212,6 +234,50 @@ export default function CalendarPage() {
           </div>
         ))}
       </div>
+
+      {/* Day view — all events for a day */}
+      {dayView && (
+        <BottomSheet onClose={() => setDayView(null)} title={formatDateHe(dayView.date)}>
+          <div className="flex flex-col gap-3">
+            {dayView.events.map(ev => {
+              const Icon = EVENT_ICONS[ev.type as EventType]
+              return (
+                <button
+                  key={ev.id}
+                  onClick={() => { setDayView(null); setSelected(ev) }}
+                  className="flex items-center gap-3 w-full p-3 rounded-xl text-right transition-colors hover:opacity-90 active:opacity-80"
+                  style={{ background: EVENT_COLORS[ev.type as EventType] + '15', border: `1px solid ${EVENT_COLORS[ev.type as EventType]}30` }}
+                >
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                    style={{ background: EVENT_COLORS[ev.type as EventType] }}
+                  >
+                    <Icon size={16} color="white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{ev.title}</p>
+                    <p className="text-xs mt-0.5" style={{ color: '#888' }}>
+                      {EVENT_LABELS[ev.type as EventType]}
+                      {ev.start_time ? ` · ${ev.start_time}` : ''}
+                      {ev.location ? ` · ${ev.location}` : ''}
+                    </p>
+                  </div>
+                  <ChevronLeft size={16} style={{ color: '#ccc', flexShrink: 0 }} />
+                </button>
+              )
+            })}
+
+            <button
+              onClick={() => openFormForDate(dayView.date)}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold border-2 border-dashed transition-colors hover:bg-gray-50"
+              style={{ borderColor: '#e5e5e0', color: '#999' }}
+            >
+              <Plus size={15} />
+              הוסף אירוע ליום זה
+            </button>
+          </div>
+        </BottomSheet>
+      )}
 
       {/* Event detail */}
       {selected && (
