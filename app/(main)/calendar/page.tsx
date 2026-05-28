@@ -37,8 +37,20 @@ const EMPTY_FORM = {
 interface UserInfo { id: string; email: string; name: string }
 
 export default function CalendarPage() {
-  const [year, setYear]   = useState(() => new Date().getFullYear())
-  const [month, setMonth] = useState(() => new Date().getMonth())
+  const [year, setYear]   = useState(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('cal_ym')
+      if (s) return parseInt(s.split('-')[0])
+    }
+    return new Date().getFullYear()
+  })
+  const [month, setMonth] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('cal_ym')
+      if (s) return parseInt(s.split('-')[1])
+    }
+    return new Date().getMonth()
+  })
   const [events, setEvents]   = useState<Event[]>([])
   const [selected, setSelected] = useState<Event | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -48,34 +60,44 @@ export default function CalendarPage() {
   const [saving, setSaving] = useState(false)
   const [users, setUsers] = useState<UserInfo[]>([])
 
-  const supabase = createClient()
-
   useEffect(() => {
     fetch('/api/users').then(r => r.json()).then(setUsers).catch(() => {})
   }, [])
 
-  const load = async (y = year, m = month) => {
-    const start = `${y}-${String(m + 1).padStart(2, '0')}-01`
-    const end   = `${y}-${String(m + 1).padStart(2, '0')}-31`
-    const { data } = await supabase
-      .from('events').select('*')
+  // Persist month/year so navigating away and back keeps the same month
+  useEffect(() => {
+    localStorage.setItem('cal_ym', `${year}-${month}`)
+  }, [year, month])
+
+  useEffect(() => {
+    const sb = createClient()
+    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
+    sb.from('events').select('*')
       .gte('date', start)
       .lte('date', end)
       .order('date').order('start_time')
-    setEvents(data ?? [])
-  }
+      .then(({ data, error }) => { if (!error) setEvents(data ?? []) })
+  }, [year, month])
 
-  useEffect(() => { load(year, month) }, [year, month]) // eslint-disable-line
+  const reload = () => {
+    const sb = createClient()
+    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
+    sb.from('events').select('*')
+      .gte('date', start)
+      .lte('date', end)
+      .order('date').order('start_time')
+      .then(({ data, error }) => { if (!error) setEvents(data ?? []) })
+  }
 
   const prevMonth = () => {
-    const ny = month === 0 ? year - 1 : year
-    const nm = month === 0 ? 11 : month - 1
-    setYear(ny); setMonth(nm)
+    setYear(y => month === 0 ? y - 1 : y)
+    setMonth(m => m === 0 ? 11 : m - 1)
   }
   const nextMonth = () => {
-    const ny = month === 11 ? year + 1 : year
-    const nm = month === 11 ? 0 : month + 1
-    setYear(ny); setMonth(nm)
+    setYear(y => month === 11 ? y + 1 : y)
+    setMonth(m => m === 11 ? 0 : m + 1)
   }
 
   const goToDate = (dateStr: string) => {
@@ -98,14 +120,6 @@ export default function CalendarPage() {
       const endD = e.end_date ?? e.date
       return e.date <= d && endD >= d
     })
-  }
-
-  const getDayPos = (ev: Event, day: number): 'single' | 'start' | 'middle' | 'end' => {
-    if (!ev.end_date || ev.end_date === ev.date) return 'single'
-    const d = dayStr(day)
-    if (d === ev.date) return 'start'
-    if (d === ev.end_date) return 'end'
-    return 'middle'
   }
 
   const handleDayClick = (day: number) => {
@@ -158,7 +172,8 @@ export default function CalendarPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    const sb = createClient()
+    const { data: { user } } = await sb.auth.getUser()
 
     const payload: Partial<Event> = {
       type: form.type,
@@ -190,19 +205,19 @@ export default function CalendarPage() {
     })
 
     if (editingId) {
-      await supabase.from('events').update(payload).eq('id', editingId)
+      await sb.from('events').update(payload).eq('id', editingId)
     } else {
-      await supabase.from('events').insert(payload)
+      await sb.from('events').insert(payload)
 
       // Auto-add contact if gig has a contact name
       if (form.type === 'gig' && form.contact_name.trim()) {
-        const { data: existing } = await supabase
+        const { data: existing } = await sb
           .from('contacts')
           .select('id')
           .ilike('name', form.contact_name.trim())
           .limit(1)
         if (!existing?.length) {
-          await supabase.from('contacts').insert({
+          await sb.from('contacts').insert({
             name: form.contact_name.trim(),
             phone: form.contact_phone || undefined,
             role: 'מפיק אירועים',
@@ -220,13 +235,14 @@ export default function CalendarPage() {
 
     // Navigate to the saved event's month so it's always visible
     if (form.date) goToDate(form.date)
-    else load(year, month)
+    else reload()
   }
 
   const handleDelete = async (id: string) => {
-    await supabase.from('events').delete().eq('id', id)
+    const sb = createClient()
+    await sb.from('events').delete().eq('id', id)
     setSelected(null)
-    load(year, month)
+    reload()
   }
 
   const getUserName = (id?: string) =>
@@ -286,7 +302,7 @@ export default function CalendarPage() {
               return (
                 <div
                   key={ci}
-                  className="min-h-[64px] md:min-h-[96px] p-1 md:p-1.5"
+                  className="min-h-[76px] md:min-h-[100px] p-1 md:p-1.5"
                   style={{
                     borderRight: ci < 6 ? '0.5px solid #f0f0ee' : 'none',
                     background: day ? 'white' : '#fafaf8',
@@ -296,39 +312,35 @@ export default function CalendarPage() {
                 >
                   {day && (
                     <>
-                      <div className="mb-0.5">
+                      <div className="mb-1">
                         <span
                           className="w-6 h-6 inline-flex items-center justify-center rounded-full text-xs font-semibold"
                           style={{ background: isToday ? '#e24b4a' : 'transparent', color: isToday ? 'white' : '#333' }}
                         >{day}</span>
                       </div>
-                      <div className="flex flex-col gap-0.5">
-                        {dayEvs.slice(0, 2).map(ev => {
-                          const Icon = EVENT_ICONS[ev.type as EventType]
-                          const pos = getDayPos(ev, day)
-                          const isStart  = pos === 'start' || pos === 'single'
-                          const isEnd    = pos === 'end'   || pos === 'single'
-                          const isMid    = pos === 'middle'
-                          return (
-                            <button
-                              key={ev.id}
-                              onClick={e => { e.stopPropagation(); setSelected(ev) }}
-                              className="flex items-center gap-1 py-[3px] text-white text-[10px] font-medium w-full truncate hover:opacity-85"
-                              style={{
-                                background: EVENT_COLORS[ev.type as EventType],
-                                paddingRight: isStart ? '6px' : '2px',
-                                paddingLeft:  isEnd   ? '6px' : '2px',
-                                borderRadius: isMid ? '0' : isStart && isEnd ? '5px' : isStart ? '5px 0 0 5px' : '0 5px 5px 0',
-                                marginRight: isStart ? '0' : '-4px',
-                                marginLeft:  isEnd   ? '0' : '-4px',
-                              }}
+                      <div className="flex flex-col gap-[3px]">
+                        {dayEvs.slice(0, 3).map(ev => (
+                          <button
+                            key={ev.id}
+                            onClick={e => { e.stopPropagation(); setSelected(ev) }}
+                            className="flex items-center gap-1 w-full text-left overflow-hidden hover:opacity-85 active:opacity-70"
+                            style={{
+                              background: EVENT_COLORS[ev.type as EventType],
+                              borderRadius: '4px',
+                              padding: '2px 4px',
+                              minHeight: '16px',
+                            }}
+                          >
+                            <span
+                              className="text-white font-medium overflow-hidden"
+                              style={{ fontSize: '10px', lineHeight: '12px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', display: 'block', width: '100%' }}
                             >
-                              {isStart && <><Icon size={9} style={{ flexShrink: 0 }} /><span className="truncate">{ev.title}</span></>}
-                            </button>
-                          )
-                        })}
-                        {dayEvs.length > 2 && (
-                          <span className="text-[10px] font-medium px-1" style={{ color: '#aaa' }}>+{dayEvs.length - 2} עוד</span>
+                              {ev.title}
+                            </span>
+                          </button>
+                        ))}
+                        {dayEvs.length > 3 && (
+                          <span style={{ fontSize: '9px', color: '#aaa', paddingRight: '2px' }}>+{dayEvs.length - 3}</span>
                         )}
                       </div>
                     </>
