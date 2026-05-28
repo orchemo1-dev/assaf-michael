@@ -6,18 +6,15 @@ import type { Event, EventType, PaymentStatus } from '@/lib/types'
 import StatusBadge from '@/components/ui/StatusBadge'
 import BottomSheet from '@/components/ui/BottomSheet'
 import {
-  ChevronRight, ChevronLeft, Plus,
+  ChevronRight, ChevronLeft, Plus, Pencil,
   Music, Microphone, Users, Camera,
 } from 'tabler-icons-react'
 
 const MONTHS_HE = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר']
-const DAYS_HE = ['א','ב','ג','ד','ה','ו','ש']
+const DAYS_HE   = ['א','ב','ג','ד','ה','ו','ש']
 
 const EVENT_COLORS: Record<EventType, string> = {
-  gig:     '#e24b4a',
-  studio:  '#639922',
-  meeting: '#534ab7',
-  other:   '#ba7517',
+  gig: '#e24b4a', studio: '#639922', meeting: '#534ab7', other: '#ba7517',
 }
 const EVENT_LABELS: Record<EventType, string> = {
   gig: 'הופעה', studio: 'אולפן', meeting: 'פגישה', other: 'אחר',
@@ -32,39 +29,59 @@ const EMPTY_FORM = {
   price: '', advance_paid: '',
   advance_received: false,
   contact_name: '', contact_phone: '', lineup: '', equipment: '',
-  payment_status: 'unpaid' as PaymentStatus,
+  payment_status: 'closing' as PaymentStatus,
   location: '', rating: 5, notes: '',
   attendees: '', meeting_topic: '', meeting_goals: '',
 }
 
+interface UserInfo { id: string; email: string; name: string }
+
 export default function CalendarPage() {
-  const [year, setYear]       = useState(() => new Date().getFullYear())
-  const [month, setMonth]     = useState(() => new Date().getMonth())
+  const [year, setYear]   = useState(() => new Date().getFullYear())
+  const [month, setMonth] = useState(() => new Date().getMonth())
   const [events, setEvents]   = useState<Event[]>([])
   const [selected, setSelected] = useState<Event | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [dayView, setDayView]   = useState<{ date: string; events: Event[] } | null>(null)
-  const [form, setForm]       = useState({ ...EMPTY_FORM })
-  const [saving, setSaving]   = useState(false)
+  const [form, setForm] = useState({ ...EMPTY_FORM })
+  const [saving, setSaving] = useState(false)
+  const [users, setUsers] = useState<UserInfo[]>([])
 
   const supabase = createClient()
 
-  const load = async () => {
-    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
-    const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
-    // Fetch events that start in this month OR multi-day events that end in this month
+  useEffect(() => {
+    fetch('/api/users').then(r => r.json()).then(setUsers).catch(() => {})
+  }, [])
+
+  const load = async (y = year, m = month) => {
+    const start = `${y}-${String(m + 1).padStart(2, '0')}-01`
+    const end   = `${y}-${String(m + 1).padStart(2, '0')}-31`
     const { data } = await supabase
       .from('events').select('*')
-      .or(`date.gte.${start},end_date.gte.${start}`)
-      .or(`date.lte.${end},end_date.lte.${end}`)
-      .order('start_time')
+      .gte('date', start)
+      .lte('date', end)
+      .order('date').order('start_time')
     setEvents(data ?? [])
   }
 
-  useEffect(() => { load() }, [year, month])
+  useEffect(() => { load(year, month) }, [year, month]) // eslint-disable-line
 
-  const prevMonth = () => month === 0 ? (setMonth(11), setYear(y => y-1)) : setMonth(m => m-1)
-  const nextMonth = () => month === 11 ? (setMonth(0), setYear(y => y+1)) : setMonth(m => m+1)
+  const prevMonth = () => {
+    const ny = month === 0 ? year - 1 : year
+    const nm = month === 0 ? 11 : month - 1
+    setYear(ny); setMonth(nm)
+  }
+  const nextMonth = () => {
+    const ny = month === 11 ? year + 1 : year
+    const nm = month === 11 ? 0 : month + 1
+    setYear(ny); setMonth(nm)
+  }
+
+  const goToDate = (dateStr: string) => {
+    const [y, m] = dateStr.split('-').map(Number)
+    setYear(y); setMonth(m - 1)
+  }
 
   const firstDay    = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -72,78 +89,153 @@ export default function CalendarPage() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
   while (cells.length % 7 !== 0) cells.push(null)
 
+  const dayStr = (day: number) =>
+    `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
   const getEventsForDay = (day: number) => {
-    const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const d = dayStr(day)
     return events.filter(e => {
-      const endDs = e.end_date ?? e.date
-      return e.date <= ds && endDs >= ds
+      const endD = e.end_date ?? e.date
+      return e.date <= d && endD >= d
     })
   }
 
-  // For multi-day events: determine position of this day within the span
-  const getDayPosition = (ev: Event, day: number): 'single' | 'start' | 'middle' | 'end' => {
+  const getDayPos = (ev: Event, day: number): 'single' | 'start' | 'middle' | 'end' => {
     if (!ev.end_date || ev.end_date === ev.date) return 'single'
-    const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    if (ds === ev.date) return 'start'
-    if (ds === ev.end_date) return 'end'
+    const d = dayStr(day)
+    if (d === ev.date) return 'start'
+    if (d === ev.end_date) return 'end'
     return 'middle'
   }
 
   const handleDayClick = (day: number) => {
-    const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    const dayEvs = events.filter(e => e.date === ds)
+    const d = dayStr(day)
+    const dayEvs = getEventsForDay(day)
     if (dayEvs.length > 0) {
-      setDayView({ date: ds, events: dayEvs })
+      setDayView({ date: d, events: dayEvs })
     } else {
-      setForm({ ...EMPTY_FORM, date: ds })
+      setForm({ ...EMPTY_FORM, date: d })
+      setEditingId(null)
       setShowForm(true)
     }
   }
 
-  const openFormForDate = (date: string) => {
+  const openAdd = (date?: string) => {
     setDayView(null)
-    setForm({ ...EMPTY_FORM, date })
+    setForm({ ...EMPTY_FORM, date: date ?? '' })
+    setEditingId(null)
+    setShowForm(true)
+  }
+
+  const openEdit = (ev: Event) => {
+    setSelected(null)
+    setDayView(null)
+    setForm({
+      type: ev.type as EventType,
+      title: ev.title,
+      date: ev.date,
+      end_date: ev.end_date ?? '',
+      start_time: ev.start_time ?? '',
+      end_time: ev.end_time ?? '',
+      price: ev.price != null ? String(ev.price) : '',
+      advance_paid: ev.advance_paid != null ? String(ev.advance_paid) : '',
+      advance_received: ev.advance_received ?? false,
+      contact_name: ev.contact_name ?? '',
+      contact_phone: ev.contact_phone ?? '',
+      lineup: ev.lineup ?? '',
+      equipment: ev.equipment ?? '',
+      payment_status: (ev.payment_status ?? 'closing') as PaymentStatus,
+      location: ev.location ?? '',
+      rating: ev.rating ?? 5,
+      notes: ev.notes ?? '',
+      attendees: ev.attendees ?? '',
+      meeting_topic: ev.meeting_topic ?? '',
+      meeting_goals: ev.meeting_goals ?? '',
+    })
+    setEditingId(ev.id)
     setShowForm(true)
   }
 
   const handleSave = async () => {
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
+
     const payload: Partial<Event> = {
-      type: form.type, title: form.title, date: form.date,
-      end_date: form.end_date && form.end_date !== form.date ? form.end_date : undefined,
-      start_time: form.start_time || undefined, end_time: form.end_time || undefined,
-      notes: form.notes || undefined, created_by: user?.id,
+      type: form.type,
+      title: form.title,
+      date: form.date,
+      end_date: form.end_date && form.end_date > form.date ? form.end_date : undefined,
+      start_time: form.start_time || undefined,
+      end_time: form.end_time || undefined,
+      notes: form.notes || undefined,
     }
+    if (!editingId) payload.created_by = user?.id
+
     if (form.type === 'gig') Object.assign(payload, {
       price: form.price ? Number(form.price) : 0,
       advance_paid: form.advance_paid ? Number(form.advance_paid) : 0,
       advance_received: form.advance_received,
-      contact_name: form.contact_name, contact_phone: form.contact_phone,
-      lineup: form.lineup, equipment: form.equipment,
-      payment_status: form.payment_status, location: form.location, rating: form.rating,
+      contact_name: form.contact_name || undefined,
+      contact_phone: form.contact_phone || undefined,
+      lineup: form.lineup || undefined,
+      equipment: form.equipment || undefined,
+      payment_status: form.payment_status,
+      location: form.location || undefined,
+      rating: form.rating,
     })
     if (form.type === 'meeting') Object.assign(payload, {
-      attendees: form.attendees, meeting_topic: form.meeting_topic, meeting_goals: form.meeting_goals,
+      attendees: form.attendees || undefined,
+      meeting_topic: form.meeting_topic || undefined,
+      meeting_goals: form.meeting_goals || undefined,
     })
-    await supabase.from('events').insert(payload)
+
+    if (editingId) {
+      await supabase.from('events').update(payload).eq('id', editingId)
+    } else {
+      await supabase.from('events').insert(payload)
+
+      // Auto-add contact if gig has a contact name
+      if (form.type === 'gig' && form.contact_name.trim()) {
+        const { data: existing } = await supabase
+          .from('contacts')
+          .select('id')
+          .ilike('name', form.contact_name.trim())
+          .limit(1)
+        if (!existing?.length) {
+          await supabase.from('contacts').insert({
+            name: form.contact_name.trim(),
+            phone: form.contact_phone || undefined,
+            role: 'מפיק אירועים',
+            category: 'אחר',
+            created_by: user?.id,
+          })
+        }
+      }
+    }
+
     setSaving(false)
     setShowForm(false)
+    setEditingId(null)
     setForm({ ...EMPTY_FORM })
-    load()
+
+    // Navigate to the saved event's month so it's always visible
+    if (form.date) goToDate(form.date)
+    else load(year, month)
   }
 
   const handleDelete = async (id: string) => {
     await supabase.from('events').delete().eq('id', id)
     setSelected(null)
-    load()
+    load(year, month)
   }
 
-  // Format date for display: "יום שלישי, 14 ביוני"
-  const formatDateHe = (ds: string) => {
-    const d = new Date(ds)
+  const getUserName = (id?: string) =>
+    id ? (users.find(u => u.id === id)?.name ?? null) : null
+
+  const formatDateHe = (d: string) => {
+    const dt = new Date(d + 'T00:00:00')
     const dayNames = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת']
-    return `יום ${dayNames[d.getDay()]}, ${d.getDate()} ב${MONTHS_HE[d.getMonth()]}`
+    return `יום ${dayNames[dt.getDay()]}, ${dt.getDate()} ב${MONTHS_HE[dt.getMonth()]}`
   }
 
   return (
@@ -151,28 +243,21 @@ export default function CalendarPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
-          <button onClick={prevMonth} className="w-9 h-9 flex items-center justify-center rounded-xl transition-colors hover:bg-gray-100">
-            <ChevronRight size={18} />
-          </button>
+          <button onClick={prevMonth} className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100"><ChevronRight size={18} /></button>
           <h2 className="text-lg font-bold min-w-[140px] text-center">{MONTHS_HE[month]} {year}</h2>
-          <button onClick={nextMonth} className="w-9 h-9 flex items-center justify-center rounded-xl transition-colors hover:bg-gray-100">
-            <ChevronLeft size={18} />
-          </button>
+          <button onClick={nextMonth} className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100"><ChevronLeft size={18} /></button>
           <button
             onClick={() => { setYear(new Date().getFullYear()); setMonth(new Date().getMonth()) }}
-            className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-gray-50"
+            className="px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-gray-50"
             style={{ borderColor: '#e5e5e0', color: '#666' }}
-          >
-            היום
-          </button>
+          >היום</button>
         </div>
         <button
-          onClick={() => { setForm({ ...EMPTY_FORM }); setShowForm(true) }}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold shadow-sm transition-opacity hover:opacity-90 active:opacity-80"
+          onClick={() => openAdd()}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold shadow-sm hover:opacity-90 active:opacity-80"
           style={{ background: '#e24b4a' }}
         >
-          <Plus size={16} />
-          הוסף אירוע
+          <Plus size={16} /> הוסף אירוע
         </button>
       </div>
 
@@ -186,26 +271,22 @@ export default function CalendarPage() {
         ))}
       </div>
 
-      {/* Calendar */}
+      {/* Calendar grid */}
       <div className="rounded-2xl overflow-hidden" style={{ border: '0.5px solid #e5e5e0', background: 'white', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-        {/* Day headers */}
         <div className="grid grid-cols-7" style={{ borderBottom: '0.5px solid #e5e5e0', background: '#fafaf8' }}>
           {DAYS_HE.map(d => (
             <div key={d} className="py-2.5 text-center text-xs font-semibold" style={{ color: '#999' }}>{d}</div>
           ))}
         </div>
-
-        {/* Weeks */}
         {Array.from({ length: cells.length / 7 }, (_, wi) => (
           <div key={wi} className="grid grid-cols-7" style={{ borderBottom: wi < cells.length / 7 - 1 ? '0.5px solid #f0f0ee' : 'none' }}>
             {cells.slice(wi * 7, wi * 7 + 7).map((day, ci) => {
               const isToday = day !== null && new Date().getDate() === day && new Date().getMonth() === month && new Date().getFullYear() === year
               const dayEvs  = day ? getEventsForDay(day) : []
-              const hasMore = dayEvs.length > 2
               return (
                 <div
                   key={ci}
-                  className="min-h-[64px] md:min-h-[96px] p-1 md:p-1.5 transition-colors"
+                  className="min-h-[64px] md:min-h-[96px] p-1 md:p-1.5"
                   style={{
                     borderRight: ci < 6 ? '0.5px solid #f0f0ee' : 'none',
                     background: day ? 'white' : '#fafaf8',
@@ -215,44 +296,39 @@ export default function CalendarPage() {
                 >
                   {day && (
                     <>
-                      <div className="flex items-center justify-between mb-0.5">
+                      <div className="mb-0.5">
                         <span
-                          className="w-6 h-6 flex items-center justify-center rounded-full text-xs font-semibold"
+                          className="w-6 h-6 inline-flex items-center justify-center rounded-full text-xs font-semibold"
                           style={{ background: isToday ? '#e24b4a' : 'transparent', color: isToday ? 'white' : '#333' }}
-                        >
-                          {day}
-                        </span>
+                        >{day}</span>
                       </div>
                       <div className="flex flex-col gap-0.5">
                         {dayEvs.slice(0, 2).map(ev => {
                           const Icon = EVENT_ICONS[ev.type as EventType]
-                          const pos = getDayPosition(ev, day)
+                          const pos = getDayPos(ev, day)
                           const isStart  = pos === 'start' || pos === 'single'
                           const isEnd    = pos === 'end'   || pos === 'single'
-                          const isMiddle = pos === 'middle'
+                          const isMid    = pos === 'middle'
                           return (
                             <button
                               key={ev.id}
                               onClick={e => { e.stopPropagation(); setSelected(ev) }}
-                              className="flex items-center gap-1 py-[3px] text-white text-[10px] font-medium w-full text-right truncate transition-opacity hover:opacity-85"
+                              className="flex items-center gap-1 py-[3px] text-white text-[10px] font-medium w-full truncate hover:opacity-85"
                               style={{
                                 background: EVENT_COLORS[ev.type as EventType],
                                 paddingRight: isStart ? '6px' : '2px',
                                 paddingLeft:  isEnd   ? '6px' : '2px',
-                                borderRadius: isMiddle ? '0' : isStart && isEnd ? '5px' : isStart ? '5px 0 0 5px' : '0 5px 5px 0',
-                                marginRight:  isStart  ? '0' : '-4px',
-                                marginLeft:   isEnd    ? '0' : '-4px',
+                                borderRadius: isMid ? '0' : isStart && isEnd ? '5px' : isStart ? '5px 0 0 5px' : '0 5px 5px 0',
+                                marginRight: isStart ? '0' : '-4px',
+                                marginLeft:  isEnd   ? '0' : '-4px',
                               }}
                             >
-                              {isStart && <Icon size={9} style={{ flexShrink: 0 }} />}
-                              {isStart && <span className="truncate">{ev.title}</span>}
+                              {isStart && <><Icon size={9} style={{ flexShrink: 0 }} /><span className="truncate">{ev.title}</span></>}
                             </button>
                           )
                         })}
-                        {hasMore && (
-                          <span className="text-[10px] font-medium px-1" style={{ color: '#aaa' }}>
-                            +{dayEvs.length - 2} עוד
-                          </span>
+                        {dayEvs.length > 2 && (
+                          <span className="text-[10px] font-medium px-1" style={{ color: '#aaa' }}>+{dayEvs.length - 2} עוד</span>
                         )}
                       </div>
                     </>
@@ -264,7 +340,7 @@ export default function CalendarPage() {
         ))}
       </div>
 
-      {/* Day view — all events for a day */}
+      {/* Day view */}
       {dayView && (
         <BottomSheet onClose={() => setDayView(null)} title={formatDateHe(dayView.date)}>
           <div className="flex flex-col gap-3">
@@ -274,13 +350,10 @@ export default function CalendarPage() {
                 <button
                   key={ev.id}
                   onClick={() => { setDayView(null); setSelected(ev) }}
-                  className="flex items-center gap-3 w-full p-3 rounded-xl text-right transition-colors hover:opacity-90 active:opacity-80"
+                  className="flex items-center gap-3 w-full p-3 rounded-xl text-right hover:opacity-90"
                   style={{ background: EVENT_COLORS[ev.type as EventType] + '15', border: `1px solid ${EVENT_COLORS[ev.type as EventType]}30` }}
                 >
-                  <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: EVENT_COLORS[ev.type as EventType] }}
-                  >
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: EVENT_COLORS[ev.type as EventType] }}>
                     <Icon size={16} color="white" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -288,6 +361,7 @@ export default function CalendarPage() {
                     <p className="text-xs mt-0.5" style={{ color: '#888' }}>
                       {EVENT_LABELS[ev.type as EventType]}
                       {ev.start_time ? ` · ${ev.start_time}` : ''}
+                      {ev.end_date && ev.end_date !== ev.date ? ` · עד ${ev.end_date}` : ''}
                       {ev.location ? ` · ${ev.location}` : ''}
                     </p>
                   </div>
@@ -295,14 +369,12 @@ export default function CalendarPage() {
                 </button>
               )
             })}
-
             <button
-              onClick={() => openFormForDate(dayView.date)}
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold border-2 border-dashed transition-colors hover:bg-gray-50"
+              onClick={() => openAdd(dayView.date)}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold border-2 border-dashed hover:bg-gray-50"
               style={{ borderColor: '#e5e5e0', color: '#999' }}
             >
-              <Plus size={15} />
-              הוסף אירוע ליום זה
+              <Plus size={15} /> הוסף אירוע ליום זה
             </button>
           </div>
         </BottomSheet>
@@ -325,15 +397,20 @@ export default function CalendarPage() {
                   : selected.date}
                 {selected.start_time ? ` · ${selected.start_time}–${selected.end_time}` : ''}
               </span>
+              {getUserName(selected.created_by) && (
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#f0f0ee', color: '#888' }}>
+                  נוסף ע"י {getUserName(selected.created_by)}
+                </span>
+              )}
             </div>
 
             <div className="grid gap-2.5 text-sm">
               {selected.type === 'gig' && (
                 <>
                   <div className="grid grid-cols-3 gap-2">
-                    <MiniCard label="מחיר" value={selected.price ? `₪${selected.price.toLocaleString()}` : '—'} />
+                    <MiniCard label="מחיר"  value={selected.price      ? `₪${selected.price.toLocaleString()}` : '—'} />
                     <MiniCard label="מקדמה" value={selected.advance_paid ? `₪${selected.advance_paid.toLocaleString()}` : '—'} />
-                    <MiniCard label="יתרה" value={selected.price ? `₪${((selected.price ?? 0) - (selected.advance_paid ?? 0)).toLocaleString()}` : '—'} />
+                    <MiniCard label="יתרה"  value={selected.price      ? `₪${((selected.price ?? 0) - (selected.advance_paid ?? 0)).toLocaleString()}` : '—'} />
                   </div>
                   {selected.payment_status && (
                     <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: '#fafaf8' }}>
@@ -342,15 +419,15 @@ export default function CalendarPage() {
                     </div>
                   )}
                   {selected.contact_name && <DetailRow label="איש קשר" value={`${selected.contact_name}${selected.contact_phone ? ` · ${selected.contact_phone}` : ''}`} />}
-                  {selected.lineup && <DetailRow label="ליינאפ" value={selected.lineup} />}
-                  {selected.equipment && <DetailRow label="ציוד" value={selected.equipment} />}
-                  {selected.location && <DetailRow label="מיקום" value={selected.location} />}
+                  {selected.lineup    && <DetailRow label="ליינאפ"  value={selected.lineup} />}
+                  {selected.equipment && <DetailRow label="ציוד"    value={selected.equipment} />}
+                  {selected.location  && <DetailRow label="מיקום"   value={selected.location} />}
                 </>
               )}
               {selected.type === 'meeting' && (
                 <>
-                  {selected.attendees && <DetailRow label="משתתפים" value={selected.attendees} />}
-                  {selected.meeting_topic && <DetailRow label="נושא" value={selected.meeting_topic} />}
+                  {selected.attendees     && <DetailRow label="משתתפים" value={selected.attendees} />}
+                  {selected.meeting_topic && <DetailRow label="נושא"    value={selected.meeting_topic} />}
                   {selected.meeting_goals && (
                     <div className="p-3 rounded-xl" style={{ background: '#fafaf8' }}>
                       <p className="text-xs font-semibold mb-1" style={{ color: '#888' }}>יעדים / סיכום</p>
@@ -367,29 +444,34 @@ export default function CalendarPage() {
               )}
             </div>
 
-            <button
-              onClick={() => handleDelete(selected.id)}
-              className="w-full py-2.5 rounded-xl text-sm font-medium border transition-colors"
-              style={{ borderColor: '#fde8e8', color: '#e24b4a', background: '#fef5f5' }}
-            >
-              מחק אירוע
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => openEdit(selected)}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border hover:bg-gray-50"
+                style={{ borderColor: '#e5e5e0', color: '#444' }}
+              >
+                <Pencil size={14} /> ערוך
+              </button>
+              <button
+                onClick={() => handleDelete(selected.id)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border"
+                style={{ borderColor: '#fde8e8', color: '#e24b4a', background: '#fef5f5' }}
+              >מחק</button>
+            </div>
           </div>
         </BottomSheet>
       )}
 
-      {/* Add event form */}
+      {/* Add / Edit form */}
       {showForm && (
-        <BottomSheet onClose={() => setShowForm(false)} title="אירוע חדש" wide>
+        <BottomSheet onClose={() => { setShowForm(false); setEditingId(null) }} title={editingId ? 'ערוך אירוע' : 'אירוע חדש'} wide>
           <div className="flex flex-col gap-4">
             {/* Type selector */}
             <div className="grid grid-cols-2 gap-2">
               {(Object.entries(EVENT_LABELS) as [EventType, string][]).map(([t, l]) => {
                 const Icon = EVENT_ICONS[t]
                 return (
-                  <button
-                    key={t}
-                    onClick={() => setForm(f => ({ ...f, type: t }))}
+                  <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
                     className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border transition-all"
                     style={{
                       background: form.type === t ? EVENT_COLORS[t] : 'white',
@@ -397,56 +479,62 @@ export default function CalendarPage() {
                       borderColor: form.type === t ? EVENT_COLORS[t] : '#e5e5e0',
                     }}
                   >
-                    <Icon size={15} />
-                    {l}
+                    <Icon size={15} />{l}
                   </button>
                 )
               })}
             </div>
 
             <F label="כותרת *">
-              <input className={inp} autoFocus value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="שם האירוע" />
+              <input className={inp} autoFocus value={form.title}
+                onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                placeholder="שם האירוע" />
             </F>
 
-            <div className="grid grid-cols-2 gap-2">
+            {/* Dates row */}
+            <div className="grid grid-cols-2 gap-3">
               <F label="תאריך התחלה *">
-                <input type="date" className={inp} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={{ direction: 'ltr' }} />
+                <input type="date" className={inp} value={form.date}
+                  onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                  style={{ direction: 'ltr' }} />
               </F>
               <F label="תאריך סיום">
-                <input
-                  type="date"
-                  className={inp}
-                  value={form.end_date}
-                  min={form.date}
+                <input type="date" className={inp} value={form.end_date} min={form.date}
                   onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))}
-                  style={{ direction: 'ltr' }}
-                  placeholder={form.date}
-                />
+                  style={{ direction: 'ltr' }} />
               </F>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            {/* Times row */}
+            <div className="grid grid-cols-2 gap-3">
               <F label="שעת כניסה">
-                <input type="time" className={inp} value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} style={{ direction: 'ltr' }} />
+                <input type="time" className={inp} value={form.start_time}
+                  onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))}
+                  style={{ direction: 'ltr' }} />
               </F>
               <F label="שעת יציאה">
-                <input type="time" className={inp} value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} style={{ direction: 'ltr' }} />
+                <input type="time" className={inp} value={form.end_time}
+                  onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))}
+                  style={{ direction: 'ltr' }} />
               </F>
             </div>
 
             {form.type === 'gig' && (
               <>
-                <div className="grid grid-cols-2 gap-2">
-                  <F label="מחיר מוסכם (₪)">
-                    <input type="number" className={inp} value={form.price} placeholder="0" onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
+                <div className="grid grid-cols-2 gap-3">
+                  <F label="מחיר (₪)">
+                    <input type="number" className={inp} value={form.price} placeholder="0"
+                      onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
                   </F>
                   <F label="מקדמה (₪)">
-                    <input type="number" className={inp} value={form.advance_paid} placeholder="0" onChange={e => setForm(f => ({ ...f, advance_paid: e.target.value }))} />
+                    <input type="number" className={inp} value={form.advance_paid} placeholder="0"
+                      onChange={e => setForm(f => ({ ...f, advance_paid: e.target.value }))} />
                   </F>
                 </div>
 
                 <F label="סטטוס תשלום">
-                  <select className={inp} value={form.payment_status} onChange={e => setForm(f => ({ ...f, payment_status: e.target.value as PaymentStatus }))}>
+                  <select className={inp} value={form.payment_status}
+                    onChange={e => setForm(f => ({ ...f, payment_status: e.target.value as PaymentStatus }))}>
                     <option value="closing">🟡 בתהליך סגירה</option>
                     <option value="unpaid">🔴 לא שולם</option>
                     <option value="advance">🟠 מקדמה עברה</option>
@@ -455,33 +543,39 @@ export default function CalendarPage() {
                 </F>
 
                 <label className="flex items-center gap-2.5 cursor-pointer">
-                  <div
-                    onClick={() => setForm(f => ({ ...f, advance_received: !f.advance_received }))}
-                    className="w-10 h-6 rounded-full transition-colors flex items-center px-1"
-                    style={{ background: form.advance_received ? '#52a918' : '#ddd' }}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-white shadow transition-transform" style={{ transform: form.advance_received ? 'translateX(-16px)' : 'translateX(0)' }} />
+                  <div onClick={() => setForm(f => ({ ...f, advance_received: !f.advance_received }))}
+                    className="w-10 h-6 rounded-full flex items-center px-1"
+                    style={{ background: form.advance_received ? '#52a918' : '#ddd' }}>
+                    <div className="w-4 h-4 rounded-full bg-white shadow transition-transform"
+                      style={{ transform: form.advance_received ? 'translateX(-16px)' : 'translateX(0)' }} />
                   </div>
                   <span className="text-sm">מקדמה התקבלה</span>
                 </label>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <F label="שם איש קשר">
-                    <input className={inp} value={form.contact_name} onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
+                    <input className={inp} value={form.contact_name}
+                      onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
                   </F>
                   <F label="טלפון">
-                    <input className={inp} value={form.contact_phone} onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))} style={{ direction: 'ltr' }} />
+                    <input className={inp} value={form.contact_phone}
+                      onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))}
+                      style={{ direction: 'ltr' }} />
                   </F>
                 </div>
 
-                <F label="ליינאפ">
-                  <input className={inp} value={form.lineup} onChange={e => setForm(f => ({ ...f, lineup: e.target.value }))} placeholder="DJ-ים נוספים" />
-                </F>
                 <F label="מיקום / ונייה">
-                  <input className={inp} value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+                  <input className={inp} value={form.location}
+                    onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+                </F>
+                <F label="ליינאפ">
+                  <input className={inp} value={form.lineup}
+                    onChange={e => setForm(f => ({ ...f, lineup: e.target.value }))}
+                    placeholder="DJ-ים נוספים" />
                 </F>
                 <F label="ציוד במקום">
-                  <input className={inp} value={form.equipment} onChange={e => setForm(f => ({ ...f, equipment: e.target.value }))} />
+                  <input className={inp} value={form.equipment}
+                    onChange={e => setForm(f => ({ ...f, equipment: e.target.value }))} />
                 </F>
               </>
             )}
@@ -489,37 +583,39 @@ export default function CalendarPage() {
             {form.type === 'meeting' && (
               <>
                 <F label="משתתפים">
-                  <input className={inp} value={form.attendees} onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} />
+                  <input className={inp} value={form.attendees}
+                    onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} />
                 </F>
                 <F label="נושא הפגישה">
-                  <input className={inp} value={form.meeting_topic} onChange={e => setForm(f => ({ ...f, meeting_topic: e.target.value }))} />
+                  <input className={inp} value={form.meeting_topic}
+                    onChange={e => setForm(f => ({ ...f, meeting_topic: e.target.value }))} />
                 </F>
                 <F label="סיכום / יעדים">
-                  <textarea className={inp} rows={3} value={form.meeting_goals} onChange={e => setForm(f => ({ ...f, meeting_goals: e.target.value }))} />
+                  <textarea className={inp} rows={3} value={form.meeting_goals}
+                    onChange={e => setForm(f => ({ ...f, meeting_goals: e.target.value }))} />
                 </F>
               </>
             )}
 
             <F label="הערות">
-              <textarea className={inp} rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+              <textarea className={inp} rows={2} value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
             </F>
 
             <div className="flex gap-2 pt-1">
               <button
                 onClick={handleSave}
                 disabled={saving || !form.title || !form.date}
-                className="flex-1 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 transition-opacity hover:opacity-90 shadow-sm"
+                className="flex-1 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-50 hover:opacity-90 shadow-sm"
                 style={{ background: '#e24b4a' }}
               >
-                {saving ? 'שומר...' : 'שמור אירוע'}
+                {saving ? 'שומר...' : editingId ? 'שמור שינויים' : 'שמור אירוע'}
               </button>
               <button
-                onClick={() => setShowForm(false)}
-                className="px-5 py-3 rounded-xl border text-sm font-medium transition-colors hover:bg-gray-50"
+                onClick={() => { setShowForm(false); setEditingId(null) }}
+                className="px-5 py-3 rounded-xl border text-sm font-medium hover:bg-gray-50"
                 style={{ borderColor: '#e5e5e0', color: '#666' }}
-              >
-                ביטול
-              </button>
+              >ביטול</button>
             </div>
           </div>
         </BottomSheet>
