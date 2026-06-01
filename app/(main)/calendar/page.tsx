@@ -71,8 +71,9 @@ export default function CalendarPage() {
 
   useEffect(() => {
     const sb = createClient()
-    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
-    const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
+    const start   = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const end     = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     sb.from('events').select('*')
       .gte('date', start)
       .lte('date', end)
@@ -82,8 +83,9 @@ export default function CalendarPage() {
 
   const reload = () => {
     const sb = createClient()
-    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
-    const end   = `${year}-${String(month + 1).padStart(2, '0')}-31`
+    const start   = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const end     = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
     sb.from('events').select('*')
       .gte('date', start)
       .lte('date', end)

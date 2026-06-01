@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase'
 import type { MarketingItem } from '@/lib/types'
 import {
   Plus, X, Link, Bulb, Photo,
-  Bookmark, ExternalLink, Star,
+  Bookmark, ExternalLink, Star, Pencil,
 } from 'tabler-icons-react'
 
 const TYPES = [
@@ -31,22 +31,39 @@ export default function MarketingPage() {
   const [items, setItems] = useState<MarketingItem[]>([])
   const [filter, setFilter] = useState('all')
   const [showForm, setShowForm] = useState(false)
+  const [editItem, setEditItem] = useState<MarketingItem | null>(null)
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
 
-  const supabase = createClient()
-
   const load = async () => {
-    const { data } = await supabase.from('marketing').select('*').order('created_at', { ascending: false })
+    const sb = createClient()
+    const { data } = await sb.from('marketing').select('*').order('created_at', { ascending: false })
     setItems(data ?? [])
   }
 
   useEffect(() => { load() }, [])
 
+  const openAdd = () => {
+    setEditItem(null)
+    setForm({ ...EMPTY_FORM })
+    setShowForm(true)
+  }
+
+  const openEdit = (item: MarketingItem) => {
+    setEditItem(item)
+    setForm({ type: item.type, title: item.title, description: item.description ?? '', url: item.url ?? '' })
+    setShowForm(true)
+  }
+
   const handleSave = async () => {
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('marketing').insert({ ...form, created_by: user?.id })
+    const sb = createClient()
+    if (editItem) {
+      await sb.from('marketing').update({ type: form.type, title: form.title, description: form.description, url: form.url }).eq('id', editItem.id)
+    } else {
+      const { data: { user } } = await sb.auth.getUser()
+      await sb.from('marketing').insert({ ...form, created_by: user?.id })
+    }
     setSaving(false)
     setShowForm(false)
     setForm({ ...EMPTY_FORM })
@@ -54,7 +71,8 @@ export default function MarketingPage() {
   }
 
   const handleDelete = async (id: string) => {
-    await supabase.from('marketing').delete().eq('id', id)
+    const sb = createClient()
+    await sb.from('marketing').delete().eq('id', id)
     load()
   }
 
@@ -65,7 +83,7 @@ export default function MarketingPage() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold">מרקטינג</h2>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openAdd}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-sm font-medium"
           style={{ background: '#e24b4a' }}
         >
@@ -110,9 +128,14 @@ export default function MarketingPage() {
                 >
                   <Icon size={16} />
                 </div>
-                <button onClick={() => handleDelete(item.id)} className="p-1 hover:bg-gray-100 rounded" style={{ color: '#ccc' }}>
-                  <X size={14} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => openEdit(item)} className="p-1 hover:bg-gray-100 rounded" style={{ color: '#ccc' }}>
+                    <Pencil size={14} />
+                  </button>
+                  <button onClick={() => handleDelete(item.id)} className="p-1 hover:bg-gray-100 rounded" style={{ color: '#ccc' }}>
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -154,7 +177,7 @@ export default function MarketingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
           <div className="w-full max-w-md rounded-2xl p-6" style={{ background: 'white', border: '0.5px solid #e5e5e0' }}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-bold">הוספת פריט מרקטינג</h3>
+              <h3 className="text-lg font-bold">{editItem ? 'עריכת פריט' : 'הוספת פריט מרקטינג'}</h3>
               <button onClick={() => setShowForm(false)} className="p-1 hover:bg-gray-100 rounded"><X size={18} /></button>
             </div>
             <div className="flex flex-col gap-4">
