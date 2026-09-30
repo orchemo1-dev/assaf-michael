@@ -42,8 +42,8 @@ export default function EpkPage() {
   const handleSaveField = async (key: string) => {
     const { data: { user } } = await supabase.auth.getUser()
     await supabase.from('epk_data').upsert(
-      { field_name: key, field_value: editVal, updated_by: user?.id, updated_at: new Date().toISOString() },
-      { onConflict: 'field_name' }
+      { artist_id: process.env.NEXT_PUBLIC_ARTIST_ID, field_name: key, field_value: editVal, updated_by: user?.id, updated_at: new Date().toISOString() },
+      { onConflict: 'artist_id,field_name' }
     )
     setData(d => ({ ...d, [key]: editVal }))
     setEditing(null)
