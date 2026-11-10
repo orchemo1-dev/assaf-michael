@@ -12,6 +12,7 @@ import {
   Users,
   CurrencyShekel,
   History,
+  Plane,
   Logout,
   Menu,
   X,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: '/contacts',  label: 'אנשי קשר',            icon: Users },
   { href: '/finance',   label: 'פיננסים',             icon: CurrencyShekel },
   { href: '/shows',     label: 'היסטוריית הופעות',    icon: History },
+  { href: '/tours',     label: 'טורים ונסיעות',       icon: Plane },
 ]
 
 const AVATARS = [
